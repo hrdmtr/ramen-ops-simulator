@@ -26,7 +26,7 @@ class ProcessConfig:
 # =============================================================================
 
 PROCESSES = [
-    ProcessConfig(id="boil", mean_time=180.0, std_time=20.0),      # 麺茹で
+    ProcessConfig(id="boil", mean_time=90.0, std_time=10.0),       # 麺茹で
     ProcessConfig(id="plate", mean_time=30.0, std_time=5.0),       # 盛り付け
     ProcessConfig(id="serve", mean_time=20.0, std_time=3.0),       # 配膳
 ]
@@ -44,7 +44,8 @@ PROCESSES = [
 # Fixed staff assignments (process_id -> number of staff)
 FIXED_STAFF = {
     "boil": 1,    # 1 person dedicated to boiling
-    "plate": 1,   # 1 person for plating (can also serve if needed)
+    "plate": 1,   # 1 person for plating
+    "serve": 1,   # 1 person for serving
 }
 
 # Number of float staff (can be assigned to any task)
