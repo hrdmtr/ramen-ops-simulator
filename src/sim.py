@@ -13,6 +13,7 @@ from config import (
     PROCESSES, ProcessConfig, FIXED_STAFF, NUM_FLOAT_STAFF,
     ACTION_SPACE, HELP_EFFECT_MULTIPLIERS, DECISION_INTERVAL
 )
+from logger import SimulationLogger
 
 
 class OrderStatus(Enum):
@@ -64,13 +65,14 @@ class RamenShopSimulator:
     - Action delays and effects
     """
 
-    def __init__(self, scenario: str = "base", seed: Optional[int] = None):
+    def __init__(self, scenario: str = "base", seed: Optional[int] = None, enable_logging: bool = False):
         """
         Initialize simulator.
 
         Args:
             scenario: Scenario name from config.SCENARIOS
             seed: Random seed for reproducibility
+            enable_logging: Enable detailed logging of events
         """
         self.scenario = scenario
         self.rng = np.random.RandomState(seed)
@@ -95,6 +97,10 @@ class RamenShopSimulator:
         self.action_change_count: int = 0
         self.last_action: str = "DO_NOTHING"
 
+        # Logging
+        self.enable_logging = enable_logging
+        self.logger = SimulationLogger() if enable_logging else None
+
     def reset(self) -> None:
         """Reset simulator to initial state."""
         self.current_time = 0.0
@@ -107,6 +113,8 @@ class RamenShopSimulator:
         self.total_idle_time = 0.0
         self.action_change_count = 0
         self.last_action = "DO_NOTHING"
+        if self.logger:
+            self.logger.reset()
 
     def set_float_action(self, action: str, delay: float = 10.0) -> None:
         """
@@ -130,6 +138,16 @@ class RamenShopSimulator:
 
             self.float_staff.current_action = new_action
             self.float_staff.action_start_time = self.current_time
+
+            # Log instruction
+            if self.logger:
+                self.logger.log_instruction(
+                    timestamp=self.current_time,
+                    staff_id=f"float_{self.float_staff.id}",
+                    instruction=new_action,
+                    description=f"Float staff assigned to: {new_action}"
+                )
+
             self.pending_action = None
             self.pending_action_time_left = 0.0
 
@@ -211,6 +229,17 @@ class RamenShopSimulator:
                         wait_time -= order.wait_times.get(prev_process.id, 0.0)
                     order.wait_times[process.id] = max(0, wait_time)
 
+                    # Log process start
+                    if self.logger:
+                        from_proc = PROCESSES[process_idx - 1].id if process_idx > 0 else None
+                        self.logger.log_process_transition(
+                            timestamp=self.current_time,
+                            order_id=order.id,
+                            from_process=from_proc,
+                            to_process=process.id,
+                            action="started"
+                        )
+
                 elif order.status == OrderStatus.IN_PROGRESS:
                     # Check if processing is complete
                     elapsed = self.current_time - order.process_start_time
@@ -224,7 +253,8 @@ class RamenShopSimulator:
 
                     if elapsed >= effective_time:
                         # Move to next process
-                        order.current_process_idx += 1
+                        next_idx = order.current_process_idx + 1
+                        order.current_process_idx = next_idx
                         order.status = OrderStatus.WAITING
                         order.process_start_time = None
 
@@ -234,6 +264,33 @@ class RamenShopSimulator:
                             order.completion_time = self.current_time
                             self.completed_orders.append(order)
                             completed_count += 1
+
+                            # Log completion
+                            if self.logger:
+                                self.logger.log_order_completion(
+                                    order_id=order.id,
+                                    arrival_time=order.arrival_time,
+                                    completion_time=order.completion_time,
+                                    process_times=order.wait_times
+                                )
+                                self.logger.log_process_transition(
+                                    timestamp=self.current_time,
+                                    order_id=order.id,
+                                    from_process=process.id,
+                                    to_process=None,
+                                    action="completed"
+                                )
+                        else:
+                            # Log transition to next process
+                            if self.logger:
+                                next_process = PROCESSES[next_idx].id if next_idx < len(PROCESSES) else None
+                                self.logger.log_process_transition(
+                                    timestamp=self.current_time,
+                                    order_id=order.id,
+                                    from_process=process.id,
+                                    to_process=next_process,
+                                    action="moved_to_next"
+                                )
 
         # Remove completed orders from active list
         self.orders = [o for o in self.orders if not o.is_complete()]

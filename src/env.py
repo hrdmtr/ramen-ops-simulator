@@ -47,6 +47,7 @@ class RamenShopEnv(gym.Env):
         scenario: str = DEFAULT_SCENARIO,
         seed: Optional[int] = DEFAULT_SEED,
         render_mode: Optional[str] = None,
+        enable_logging: bool = False,
     ):
         """
         Initialize environment.
@@ -55,6 +56,7 @@ class RamenShopEnv(gym.Env):
             scenario: Scenario name from SCENARIOS
             seed: Random seed
             render_mode: Rendering mode (currently only "human" for text output)
+            enable_logging: Enable detailed event logging
         """
         super().__init__()
 
@@ -62,9 +64,10 @@ class RamenShopEnv(gym.Env):
         self.scenario_config = SCENARIOS[scenario]
         self.render_mode = render_mode
         self._seed = seed
+        self.enable_logging = enable_logging
 
         # Initialize simulator and reward calculator
-        self.sim = RamenShopSimulator(scenario=scenario, seed=seed)
+        self.sim = RamenShopSimulator(scenario=scenario, seed=seed, enable_logging=enable_logging)
         self.reward_calc = RewardCalculator()
 
         # Episode tracking
@@ -188,7 +191,7 @@ class RamenShopEnv(gym.Env):
         # Reset simulator
         if seed is not None:
             self._seed = seed
-            self.sim = RamenShopSimulator(scenario=self.scenario, seed=seed)
+            self.sim = RamenShopSimulator(scenario=self.scenario, seed=seed, enable_logging=self.enable_logging)
         else:
             self.sim.reset()
 
@@ -268,6 +271,15 @@ class RamenShopEnv(gym.Env):
             episode_summary = compute_episode_metrics(self.episode_rewards)
             sim_summary = self.sim.get_metrics_summary()
             info["episode"] = {**episode_summary, **sim_summary}
+
+            # Save logs if logging is enabled
+            if self.enable_logging and self.sim.logger:
+                log_files = self.sim.logger.save_to_csv(prefix="episode_log")
+                info["log_files"] = log_files
+                print(f"\n📁 Logs saved:")
+                for log_type, filename in log_files.items():
+                    print(f"   {log_type}: {filename}")
+                self.sim.logger.print_summary()
 
         return obs, reward, terminated, truncated, info
 
