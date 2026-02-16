@@ -21,6 +21,7 @@ class RewardBreakdown:
     wip_overflow_penalty: float = 0.0
     idle_penalty: float = 0.0
     change_penalty: float = 0.0
+    dish_shortage_penalty: float = 0.0
     total: float = 0.0
 
     def to_dict(self) -> Dict[str, float]:
@@ -31,6 +32,7 @@ class RewardBreakdown:
             "reward_wip_overflow": self.wip_overflow_penalty,
             "reward_idle": self.idle_penalty,
             "reward_change": self.change_penalty,
+            "reward_dish_shortage": self.dish_shortage_penalty,
             "reward_total": self.total,
         }
 
@@ -63,6 +65,8 @@ class RewardCalculator:
         wip_total: int,
         idle_time: float,
         action_changed: bool,
+        clean_dishes: int = 30,
+        empty_seats: int = 0,
         step_duration: float = 30.0,
     ) -> RewardBreakdown:
         """
@@ -74,6 +78,8 @@ class RewardCalculator:
             wip_total: Total work-in-progress (orders)
             idle_time: Float staff idle time this step (seconds)
             action_changed: Whether action changed from previous step
+            clean_dishes: Number of clean dishes available
+            empty_seats: Number of empty seats (potential customers)
             step_duration: Length of time step (seconds)
 
         Returns:
@@ -107,6 +113,16 @@ class RewardCalculator:
         else:
             breakdown.change_penalty = 0.0
 
+        # 6. Dish shortage penalty (negative)
+        # Critical penalty when clean dishes are running low
+        # Penalize proportionally to shortage severity
+        DISH_THRESHOLD = 10  # Minimum desired clean dishes
+        if clean_dishes < DISH_THRESHOLD:
+            shortage = DISH_THRESHOLD - clean_dishes
+            breakdown.dish_shortage_penalty = shortage * self.weights["dish_shortage"]
+        else:
+            breakdown.dish_shortage_penalty = 0.0
+
         # Total reward
         breakdown.total = (
             breakdown.completed_bowls
@@ -114,6 +130,7 @@ class RewardCalculator:
             + breakdown.wip_overflow_penalty  # Already negative
             + breakdown.idle_penalty  # Already negative
             + breakdown.change_penalty  # Already negative
+            + breakdown.dish_shortage_penalty  # Already negative
         )
 
         return breakdown
@@ -138,6 +155,8 @@ class RewardCalculator:
         wip_total = current_metrics.get("wip_total", 0)
         idle_time_step = current_metrics.get("idle_time_step", 0.0)
         action_changed = current_metrics.get("action_changed", False)
+        clean_dishes = current_metrics.get("clean_dishes", 30)
+        empty_seats = current_metrics.get("empty_seats", 0)
 
         # Estimate average wait time
         # For simplicity, use WIP as proxy (more WIP = longer wait)
@@ -150,6 +169,8 @@ class RewardCalculator:
             wip_total=wip_total,
             idle_time=idle_time_step,
             action_changed=action_changed,
+            clean_dishes=clean_dishes,
+            empty_seats=empty_seats,
         )
 
     def update_weights(self, new_weights: Dict[str, float]) -> None:

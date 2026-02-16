@@ -153,6 +153,42 @@ class VoiceOutput:
 
             base_message = f"{boil_count}玉茹でてください"
 
+        elif state and action_name == "PLATE_HELP":
+            # Calculate how many plates need to be plated
+            plate_wait = state.get("plate_wait", 0)
+            plate_in_progress = state.get("plate_in_progress", 0)
+
+            # Total in plating pipeline
+            in_pipeline = plate_wait + plate_in_progress
+
+            # Determine how many to plate (suggest 2-4 plates at a time)
+            if in_pipeline >= 4:
+                plate_count = 4
+            elif in_pipeline >= 2:
+                plate_count = max(2, min(4, in_pipeline))
+            else:
+                plate_count = max(2, plate_wait) if plate_wait > 0 else 2  # Default to 2
+
+            base_message = f"{plate_count}皿盛り付けしてください"
+
+        elif state and action_name == "SERVE_HELP":
+            # Calculate how many plates need to be served
+            serve_wait = state.get("serve_wait", 0)
+            serve_in_progress = state.get("serve_in_progress", 0)
+
+            # Total in serving pipeline
+            in_pipeline = serve_wait + serve_in_progress
+
+            # Determine how many to serve (suggest 2-4 plates at a time)
+            if in_pipeline >= 4:
+                serve_count = 4
+            elif in_pipeline >= 2:
+                serve_count = max(2, min(4, in_pipeline))
+            else:
+                serve_count = max(2, serve_wait) if serve_wait > 0 else 2  # Default to 2
+
+            base_message = f"{serve_count}皿配膳してください"
+
         elif state and action_name == "DISH_WASH":
             # Check how many dirty dishes
             dirty_dishes = state.get("dirty_dishes", 0)

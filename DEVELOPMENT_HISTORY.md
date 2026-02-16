@@ -231,6 +231,30 @@ python eval_with_instruction_log.py \
 - 調理状況（各工程のWIP）
 - 皿の状態
 
+### 5. 音声案内付き評価 (`eval_with_voice.py`)
+リアルタイム音声案内でシミュレーションを実行
+```bash
+PYTHONPATH=/Users/haradamitsuru/repos/ramen-ops-simulator/src:$PYTHONPATH \
+python eval_with_voice.py \
+  --model-path models/base_20260215_094011/final_model.zip \
+  --scenario base \
+  --duration 60 \
+  --realtime \
+  --time-scale 10.0 \
+  --speech-rate 200
+```
+
+**オプション**:
+- `--realtime`: リアルタイムモード有効化
+- `--time-scale`: 時間倍速（1.0=実時間、10.0=10倍速）
+- `--speech-rate`: 音声速度（200=通常、600=3倍速、2000=10倍速）
+- `--no-voice`: 音声出力を無効化
+
+**特徴**:
+- スタッフ名付きの具体的な指示（「Aさん、2玉茹でてください」）
+- 音声再生完了の確認ログ
+- 音声案内回数のカウント
+
 ## 開発の経緯
 
 ### Phase 1: 基礎実装
@@ -270,9 +294,286 @@ python eval_with_instruction_log.py \
 - デバッグと改善点の発見を容易にする
 - 実店舗への適用可能性を検証
 
-## 現在の状態（2026-02-15）
+### Phase 4: 音声案内機能の実装
+**日付**: 2026-02-16
 
-### 実装完了
+**追加機能**:
+
+1. **音声出力システム** (`src/voice.py`)
+   - macOS `say`コマンドを使用した日本語TTS
+   - 音声速度調整（1倍速〜10倍速対応）
+   - 具体的な数量を含む動的指示生成:
+     - 茹で: 「Aさん、2玉茹でてください」
+     - 盛り付け: 「Bさん、3皿盛り付けしてください」
+     - 配膳: 「Cさん、2皿配膳してください」
+     - 皿洗い: 「Aさん、皿洗いをお願いします。汚れた皿が15枚あります」
+   - 状況に応じた数量計算（2〜4個/皿の範囲で最適化）
+
+2. **スタッフ割り当てシステム** (`src/staff_assignment.py`)
+   - ラウンドロビン方式でA/B/Cさんに指示を順番に割り当て
+   - タスク状態管理（現在のタスク、開始時刻、可用性）
+   - 複数の割り当て戦略をサポート（round_robin, availability, task_based）
+
+3. **音声付き評価スクリプト** (`eval_with_voice.py`)
+   - リアルタイムモードでの実行（--realtime フラグ）
+   - 時間スケール調整（--time-scale）: 1秒で何秒進めるかを制御
+     - 例: `--time-scale 60.0` で1秒で1分進む（60倍速）
+   - 音声速度調整（--speech-rate）: 200 wpm（通常） 〜 2000 wpm（10倍速）
+   - 音声とシミュレーション速度の独立制御
+   - 詳細なデバッグログ出力（音声再生完了の確認）
+
+**使用例**:
+```bash
+# 通常速度の音声で10倍速シミュレーション（60分を6分で実行）
+python eval_with_voice.py --model-path models/xxx/final_model.zip \
+  --duration 60 --realtime --time-scale 10.0 --speech-rate 200
+
+# 3倍速音声で60倍速シミュレーション（120分を2分で実行）
+python eval_with_voice.py --model-path models/xxx/final_model.zip \
+  --duration 120 --realtime --time-scale 60.0 --speech-rate 600
+
+# 最高速で音声なし（8時間を数秒で実行）
+python eval_with_voice.py --model-path models/xxx/final_model.zip \
+  --duration 480 --no-voice
+```
+
+**設計意図**:
+- 実運用を想定した音声案内システムの検証
+- 具体的な数量指示でスタッフの理解を容易にする
+- リアルタイム実行で実際の業務フローを体験
+- 時間スケール調整で長時間シミュレーションを短時間で確認
+
+### Phase 5: Webインターフェースによる手動検証システム
+**日付**: 2026-02-16
+
+**目的**: シミュレーション環境の正確性を検証し、指示システムの動作を確認するための対話型Webインターフェースの構築
+
+**要件**:
+1. ブラウザから手動で顧客を追加
+2. 顧客は来店後5秒で自動注文（券売機をシミュレート）
+3. 注文確定時に即座に茹で指示を出力
+4. リアルタイムで店舗状態を可視化
+5. 音声指示の統合
+
+**アーキテクチャ**:
+```
+┌─────────────┐
+│ ブラウザUI  │ ← 来店ボタン、状態表示
+└──────┬──────┘
+       │ HTTP/WebSocket
+┌──────▼──────┐
+│ Flask Server│ ← REST API + WebSocket
+└──────┬──────┘
+       │
+┌──────▼──────────────┐
+│ Controllable Sim    │
+│ - 手動顧客追加      │
+│ - 5秒後自動注文     │
+│ - 注文時即茹で指示  │
+└──────┬──────────────┘
+       │
+┌──────▼──────┐
+│ 音声指示     │
+└─────────────┘
+```
+
+**実装コンポーネント**:
+
+1. **Webサーバー** (`src/web_server.py`)
+   - Flask + Flask-SocketIO
+   - REST API:
+     - `POST /api/add_customer`: 顧客追加
+     - `GET /api/state`: 店舗状態取得
+   - WebSocket: リアルタイム状態配信
+
+2. **手動制御可能シミュレーター** (`src/controllable_sim.py`)
+   - 既存 `RamenShopSimulator` を拡張
+   - `add_manual_customer()`: 外部からの顧客追加API
+   - 自動注文タイマー（5秒）
+   - 注文確定時の即座茹で指示トリガー
+
+3. **ブラウザUI**
+   - `static/index.html`: メインページ
+   - `static/style.css`: スタイリング
+   - `static/app.js`: WebSocket通信とUI更新
+   - 表示内容:
+     - 来店ボタン（大きく目立つ）
+     - 待ち客数
+     - 在席客数
+     - 調理状況（boil/plate/serve別のWIP）
+     - フロートスタッフの現在行動
+     - 皿の状態（きれい/汚れ/洗浄中）
+
+4. **音声指示統合**
+   - 注文時の「○玉茹でてください」音声
+   - 既存 `src/voice.py` の活用
+
+**データフロー**:
+```
+1. ユーザーが「来店」ボタンクリック
+   ↓
+2. POST /api/add_customer
+   ↓
+3. シミュレーターに顧客追加（待ち行列）
+   ↓
+4. 5秒経過（券売機で注文）
+   ↓
+5. 注文確定 → 即座にBOIL_HELP指示
+   ↓
+6. 音声「○玉茹でてください」
+   ↓
+7. WebSocketで全体状態をブラウザに配信
+```
+
+**期待される成果**:
+- シミュレーション環境の動作検証
+- 指示タイミングの正確性確認
+- 現実の店舗フローとの整合性評価
+- デバッグの容易化
+
+**実装完了した内容**:
+1. `src/controllable_sim.py`: ControllableSimulatorクラス
+   - `add_manual_customer()`: 手動顧客追加API
+   - `_process_pending_orders()`: 5秒後の自動注文処理
+   - `on_order_confirmed`: 注文確定時のコールバック
+
+2. `src/web_server.py`: Flask + Flask-SocketIO Webサーバー
+   - REST API エンドポイント
+   - WebSocket リアルタイム通信
+   - 音声指示統合（VoiceOutput）
+
+3. `static/index.html`, `static/style.css`, `static/app.js`: ブラウザUI
+   - レスポンシブデザイン
+   - リアルタイム状態表示
+   - イベントログ
+
+4. `WEB_INTERFACE_GUIDE.md`: 使用ガイド
+
+**起動方法**:
+```bash
+PYTHONPATH=src:$PYTHONPATH python src/web_server.py
+# ブラウザで http://localhost:8080 を開く
+```
+
+**検証済み項目**:
+- ✅ サーバー起動（ポート8080）
+- ✅ WebSocket接続
+- ✅ 手動顧客追加
+- ✅ 5秒後自動注文
+- ✅ 音声指示出力（「○玉茹でてください」）
+- ✅ リアルタイム状態更新
+
+**重要な修正（2026-02-16）: 専任スタッフ削除による指示ベース設計への移行**
+
+**問題の発見**:
+- Webインターフェースのテスト中、盛り付け・配膳の音声指示が一切出ない現象を発見
+- 調査の結果、専任スタッフ（FIXED_STAFF）が自動で処理していたため、キューに注文が溜まらず指示が不要だった
+
+**根本原因**:
+```python
+# 旧設定（自動処理）
+FIXED_STAFF = {
+    "boil": 1,    # 茹で専任スタッフ1名
+    "plate": 1,   # 盛り付け専任スタッフ1名
+    "serve": 1,   # 配膳専任スタッフ1名
+}
+```
+この設定では、各工程に専任スタッフがいるため：
+- 注文が来るとすぐに処理開始（自動）
+- キューに溜まらない
+- 音声指示が発動する機会がない（監視ロジックが機能しない）
+
+**選択した解決策（選択肢1）**:
+全ての工程で専任スタッフをなくし、明示的な指示がない限り処理が進まない設計に変更
+
+**実装変更**:
+
+1. **設定ファイル修正** (`src/config.py`)
+```python
+# 新設定（指示ベース）
+FIXED_STAFF = {
+    "boil": 0,    # No dedicated staff - instruction required
+    "plate": 0,   # No dedicated staff - instruction required
+    "serve": 0,   # No dedicated staff - instruction required
+}
+```
+
+2. **シミュレーターロジック修正** (`src/sim.py`)
+`_get_process_capacity()` メソッドを修正して、フロートスタッフまたは専任スタッフが割り当てられている場合のみ処理容量を返すように変更：
+```python
+def _get_process_capacity(self, process_id: str) -> float:
+    # Check if float staff is assigned to this process
+    help_action = f"{process_id.upper()}_HELP"
+    if self.float_staff.current_action == help_action:
+        return 1.0  # Float staff is assigned
+
+    # Check fixed staff assignment
+    fixed_count = FIXED_STAFF.get(process_id, 0)
+    if fixed_count > 0:
+        return 1.0  # Fixed staff is present
+
+    # No one is working on this process
+    return 0.0
+```
+
+3. **監視・指示ロジック追加** (`src/web_server.py`)
+`check_and_issue_instructions()` 関数で、盛り付け・配膳キューを監視し、必要に応じて音声指示を発動：
+```python
+def check_and_issue_instructions(state: dict, current_time: float):
+    # Check plate queue
+    plate_wait = state.get("plate_wait", 0)
+    if plate_wait >= 1 and (current_time - last_instruction_time["plate"]) >= INSTRUCTION_COOLDOWN:
+        quantity = max(2, min(4, plate_wait))
+        instruction_text = f"{quantity}皿盛り付けしてください"
+        voice_output.speak(instruction_text, blocking=False)
+        # ... (emit WebSocket event)
+
+    # Check serve queue (similar logic)
+    # Check dish washing (similar logic)
+```
+
+**テスト結果** (`test_no_fixed_staff.py`):
+```
+Step 1 (DO_NOTHING):
+  t=60s - boil_wait=2, boil_in_progress=0 ✅ 指示なしで待機
+
+Step 2 (BOIL_HELP):
+  t=80s - boil_wait=0, boil_in_progress=2 ✅ 指示後に処理開始
+
+Step 3 (継続):
+  t=170s - plate_wait=2, plate_in_progress=0 ✅ 盛り付け指示なしで待機
+
+Step 4 (PLATE_HELP):
+  t=200s - plate_in_progress=3 ✅ 盛り付け開始
+  t=220s - serve_wait=3 ✅ 配膳待ちに移行
+
+Step 5 (SERVE_HELP):
+  t=260s - serve_in_progress=3 ✅ 配膳開始
+  t=270s - completed=3 ✅ 完成
+```
+
+**期待される動作フロー**:
+1. 顧客来店 → 5秒後注文確定
+2. 🔊 「○玉茹でてください」（注文時）
+3. 茹で完了 → キューに溜まる
+4. 🔊 「○皿盛り付けしてください」（監視ロジック）
+5. 盛り付け完了 → キューに溜まる
+6. 🔊 「○皿配膳してください」（監視ロジック）
+7. 配膳完了 → 顧客に提供
+
+**メリット**:
+- ✅ 全工程で音声指示が必要 → リアリティ向上
+- ✅ キューの可視化が可能 → 状況把握が容易
+- ✅ ボトルネックの明確化 → 問題箇所の特定が容易
+- ✅ より現実的な店舗オペレーションを再現
+
+**デメリット（考慮事項）**:
+- 既存の学習済みモデルは専任スタッフありで学習されているため、この設定では再学習が必要
+- RL学習時の報酬設計を見直す必要がある（指示を出すタイミングの最適化）
+
+## 現在の状態（2026-02-16 23:00）
+
+### 実装完了（Phase 5まで）
 - ✅ 容量ベースのヘルパーシステム
 - ✅ 皿管理システム
 - ✅ 顧客ライフサイクル管理
@@ -281,12 +582,33 @@ python eval_with_instruction_log.py \
 - ✅ 4種類の評価スクリプト
 - ✅ 席別可視化
 - ✅ AI指示ログ
+- ✅ 音声案内システム（macOS `say` コマンド統合）
+- ✅ **Webインターフェース（Phase 5）**
+  - Flask + Flask-SocketIO サーバー
+  - 手動制御可能シミュレーター (`src/controllable_sim.py`)
+  - ブラウザUI（HTML/CSS/JavaScript）
+  - リアルタイム状態配信（WebSocket）
+  - 手動来店機能
+  - 5秒後自動注文機能
+  - 注文確定時の即座茹で指示（音声出力）
+  - **全工程で指示が必要な設計に移行**（FIXED_STAFF = 0）
+  - 盛り付け・配膳の自動監視と音声指示機能
 
 ### 動作確認済み
 - ✅ ヘルパー効果の正しい動作（容量増加）
 - ✅ 60分営業での安定動作（47杯完成）
 - ✅ 各種ログの出力
 - ✅ CSV/テキスト両形式での出力
+- ✅ **Webインターフェースの動作確認**
+  - サーバー起動確認（ポート8080）
+  - WebSocket接続確認
+  - 手動顧客追加機能の動作
+  - 5秒後の自動注文トリガー
+  - 音声指示の出力
+  - リアルタイム状態更新
+- ✅ **専任スタッフなし設定の動作確認**（2026-02-16）
+  - 全工程で明示的な指示が必要な設計に変更
+  - 指示なしでは処理が進まないことを検証
 
 ### 学習中のモデル
 以下のバックグラウンドタスクが実行中（複数の異なる学習設定を試行中）:
@@ -357,40 +679,65 @@ python eval_with_instruction_log.py \
 ```
 ramen-ops-simulator/
 ├── src/
-│   ├── sim.py           # シミュレーター本体
-│   ├── env.py           # Gymnasium環境
-│   ├── reward.py        # 報酬関数
-│   └── config.py        # 設定定義
-├── train.py             # 学習スクリプト
-├── eval.py              # 標準評価
-├── eval_detailed_log.py # 詳細ログ（横表示）
+│   ├── sim.py               # シミュレーター本体
+│   ├── env.py               # Gymnasium環境
+│   ├── reward.py            # 報酬関数
+│   ├── config.py            # 設定定義
+│   ├── voice.py             # 音声出力システム（Phase 4）
+│   ├── staff_assignment.py  # スタッフ割り当て（Phase 4）
+│   ├── controllable_sim.py  # 手動制御シミュレーター（Phase 5）
+│   ├── web_server.py        # Flask Webサーバー（Phase 5）
+│   └── logger.py            # ロギング機能
+├── static/                  # Webインターフェース（Phase 5）
+│   ├── index.html           # メインページ
+│   ├── style.css            # スタイリング
+│   └── app.js               # フロントエンドロジック
+├── train.py                 # 学習スクリプト
+├── eval.py                  # 標準評価
+├── eval_detailed_log.py     # 詳細ログ（横表示）
 ├── eval_detailed_with_seats.py  # 席別詳細ログ
 ├── eval_with_instruction_log.py # AI指示ログ
-├── models/              # 学習済みモデル
+├── eval_with_voice.py       # 音声案内付き評価（Phase 4）
+├── test_no_fixed_staff.py   # 専任スタッフなし設定のテスト（Phase 5）
+├── models/                  # 学習済みモデル
 │   └── base_20260215_094011/
 │       └── final_model.zip
-├── results/             # 評価結果
+├── results/                 # 評価結果
 │   ├── ai_instruction_log.csv
 │   ├── ai_instruction_log.txt
 │   ├── detailed_minute_log_with_seats.txt
 │   └── seat_level_detailed_log.txt
-├── requirements.txt     # 依存パッケージ
-├── README.md           # プロジェクト説明
-└── DEVELOPMENT_HISTORY.md  # このファイル
+├── requirements.txt         # 依存パッケージ
+├── README.md               # プロジェクト説明
+├── DEVELOPMENT_HISTORY.md  # このファイル（開発履歴）
+└── WEB_INTERFACE_GUIDE.md  # Web使用ガイド（Phase 5）
 ```
 
 ## 依存パッケージ
 
 ```
-gymnasium
-stable-baselines3[extra]
-numpy
+gymnasium>=0.29.0
+stable-baselines3>=2.2.0
+numpy>=1.24.0
+pandas>=2.0.0
+matplotlib>=3.7.0
+torch>=2.0.0
+tensorboard>=2.14.0
+flask>=3.0.0              # Phase 5
+flask-socketio>=5.3.0     # Phase 5
+flask-cors>=4.0.0         # Phase 5
 ```
 
 インストール:
 ```bash
 pip install -r requirements.txt
 ```
+
+### Web機能の追加依存関係
+Phase 5のWebインターフェースを使用する場合、以下が追加で必要:
+- Flask: Webサーバーフレームワーク
+- Flask-SocketIO: WebSocket通信
+- Flask-CORS: CORS対応
 
 ## 重要な設定値
 
