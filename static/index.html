@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ラーメン店シミュレーター - 手動検証</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🍜 ラーメン店シミュレーター</h1>
+            <p class="subtitle">手動来店・シミュレーション検証システム</p>
+        </header>
+
+        <div class="controls">
+            <button id="initBtn" class="btn btn-secondary">初期化</button>
+            <button id="startBtn" class="btn btn-success">シミュレーション開始</button>
+            <button id="stopBtn" class="btn btn-danger" disabled>停止</button>
+        </div>
+
+        <div class="main-action">
+            <button id="addCustomerBtn" class="btn-large btn-primary">
+                👤 来店
+            </button>
+            <p class="hint">クリックして顧客を追加（5秒後に自動注文）</p>
+        </div>
+
+        <div class="dashboard">
+            <!-- Time Display -->
+            <div class="card time-card">
+                <h2>⏰ 経過時間</h2>
+                <div class="time-display" id="timeDisplay">00:00</div>
+            </div>
+
+            <!-- Customer Status -->
+            <div class="card">
+                <h2>👥 顧客状況</h2>
+                <div class="metrics">
+                    <div class="metric">
+                        <span class="label">待ち客数:</span>
+                        <span class="value" id="waitingCustomers">0</span>
+                    </div>
+                    <div class="metric">
+                        <span class="label">在席客数:</span>
+                        <span class="value" id="seatedCustomers">0</span>
+                    </div>
+                    <div class="metric">
+                        <span class="label">料理待ち:</span>
+                        <span class="value" id="waitingForFood">0</span>
+                    </div>
+                    <div class="metric">
+                        <span class="label">食事中:</span>
+                        <span class="value" id="eating">0</span>
+                    </div>
+                    <div class="metric">
+                        <span class="label">空席:</span>
+                        <span class="value" id="emptySeats">10</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cooking Status -->
+            <div class="card">
+                <h2>🔥 調理状況</h2>
+                <div class="metrics">
+                    <div class="metric">
+                        <span class="label">茹で (待ち/作業中):</span>
+                        <span class="value">
+                            <span id="boilWait">0</span> / <span id="boilProgress">0</span>
+                        </span>
+                    </div>
+                    <div class="metric">
+                        <span class="label">盛り付け (待ち/作業中):</span>
+                        <span class="value">
+                            <span id="plateWait">0</span> / <span id="plateProgress">0</span>
+                        </span>
+                    </div>
+                    <div class="metric">
+                        <span class="label">配膳 (待ち/作業中):</span>
+                        <span class="value">
+                            <span id="serveWait">0</span> / <span id="serveProgress">0</span>
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Staff Status -->
+            <div class="card">
+                <h2>👨‍🍳 フロートスタッフ</h2>
+                <div class="metrics">
+                    <div class="metric">
+                        <span class="label">現在の行動:</span>
+                        <span class="value staff-action" id="currentAction">DO_NOTHING</span>
+                    </div>
+                    <div class="metric">
+                        <span class="label">保留中の指示:</span>
+                        <span class="value" id="pendingAction">なし</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dish Status -->
+            <div class="card">
+                <h2>🍽️ 皿の状態</h2>
+                <div class="metrics">
+                    <div class="metric">
+                        <span class="label">きれいな皿:</span>
+                        <span class="value" id="cleanDishes">30</span>
+                    </div>
+                    <div class="metric">
+                        <span class="label">汚れた皿:</span>
+                        <span class="value" id="dirtyDishes">0</span>
+                    </div>
+                    <div class="metric">
+                        <span class="label">洗浄中:</span>
+                        <span class="value" id="washingDishes">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Metrics -->
+            <div class="card">
+                <h2>📊 実績</h2>
+                <div class="metrics">
+                    <div class="metric">
+                        <span class="label">完成料理数:</span>
+                        <span class="value" id="completedOrders">0</span>
+                    </div>
+                    <div class="metric">
+                        <span class="label">注文予定:</span>
+                        <span class="value" id="pendingOrders">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Event Log -->
+        <div class="event-log-container">
+            <h2>📋 イベントログ</h2>
+            <div class="event-log" id="eventLog">
+                <div class="event-item">システム起動しました</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

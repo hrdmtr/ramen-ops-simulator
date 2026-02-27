@@ -15,7 +15,7 @@ from reward import RewardCalculator, RewardBreakdown
 from config import (
     PROCESSES, ACTION_SPACE, EPISODE_STEPS, SCENARIOS, DEFAULT_SCENARIO,
     MAX_ARRIVALS_PER_STEP, MAX_WIP_PER_PROCESS, MAX_IDLE_TIME, MAX_PENDING_TIME,
-    DECISION_INTERVAL, DEFAULT_SEED
+    DECISION_INTERVAL, DEFAULT_SEED, TOTAL_SEATS, MAX_WAITING_CUSTOMERS, MAX_DISHES
 )
 
 
@@ -31,9 +31,17 @@ class RamenShopEnv(gym.Env):
         - current_action: One-hot encoding of current float action
         - pending_action: One-hot encoding of pending action (or zeros if none)
         - pending_time_left: Time until pending action applies (normalized)
+        - waiting_customers: Number of customers waiting for seats (normalized)
+        - seated_customers: Number of seated customers (normalized)
+        - customers_eating: Number of customers eating (normalized)
+        - customers_waiting_for_food: Number of customers waiting for food (normalized)
+        - empty_seats: Number of empty seats (normalized)
+        - clean_dishes: Number of clean dishes available (normalized)
+        - dirty_dishes: Number of dirty dishes waiting to be washed (normalized)
+        - dishes_being_washed: Number of dishes currently being washed (normalized)
 
     Action Space (Discrete):
-        Corresponds to ACTION_SPACE in config
+        Corresponds to ACTION_SPACE in config (includes DISH_WASH action)
 
     Reward:
         Multi-objective reward focusing on throughput, wait time, idle reduction,
@@ -47,6 +55,8 @@ class RamenShopEnv(gym.Env):
         scenario: str = DEFAULT_SCENARIO,
         seed: Optional[int] = DEFAULT_SEED,
         render_mode: Optional[str] = None,
+        enable_logging: bool = False,
+        enable_state_log: bool = False,
     ):
         """
         Initialize environment.
@@ -55,6 +65,8 @@ class RamenShopEnv(gym.Env):
             scenario: Scenario name from SCENARIOS
             seed: Random seed
             render_mode: Rendering mode (currently only "human" for text output)
+            enable_logging: Enable detailed event logging
+            enable_state_log: Enable real-time state change logging to console
         """
         super().__init__()
 
@@ -62,9 +74,11 @@ class RamenShopEnv(gym.Env):
         self.scenario_config = SCENARIOS[scenario]
         self.render_mode = render_mode
         self._seed = seed
+        self.enable_logging = enable_logging
+        self.enable_state_log = enable_state_log
 
         # Initialize simulator and reward calculator
-        self.sim = RamenShopSimulator(scenario=scenario, seed=seed)
+        self.sim = RamenShopSimulator(scenario=scenario, seed=seed, enable_logging=enable_logging, enable_state_log=enable_state_log)
         self.reward_calc = RewardCalculator()
 
         # Episode tracking
@@ -94,6 +108,14 @@ class RamenShopEnv(gym.Env):
         - current_action (len(ACTION_SPACE))
         - pending_action (len(ACTION_SPACE))
         - pending_time_left (1)
+        - waiting_customers (1)
+        - seated_customers (1)
+        - customers_eating (1)
+        - customers_waiting_for_food (1)
+        - empty_seats (1)
+        - clean_dishes (1)
+        - dirty_dishes (1)
+        - dishes_being_washed (1)
         """
         num_features = (
             1  # arrivals
@@ -103,6 +125,7 @@ class RamenShopEnv(gym.Env):
             + len(ACTION_SPACE)  # current action (one-hot)
             + len(ACTION_SPACE)  # pending action (one-hot)
             + 1  # pending time
+            + 8  # restaurant/customer/dish state (including dishes_being_washed)
         )
 
         # All features normalized to [0, 1]
@@ -161,6 +184,18 @@ class RamenShopEnv(gym.Env):
         pending_time = state.get("pending_time_left", 0.0)
         obs.append(min(pending_time / MAX_PENDING_TIME, 1.0))
 
+        # 8. Restaurant/customer state (normalized)
+        obs.append(min(state.get("waiting_customers", 0) / MAX_WAITING_CUSTOMERS, 1.0))
+        obs.append(min(state.get("seated_customers", 0) / TOTAL_SEATS, 1.0))
+        obs.append(min(state.get("customers_eating", 0) / TOTAL_SEATS, 1.0))
+        obs.append(min(state.get("customers_waiting_for_food", 0) / TOTAL_SEATS, 1.0))
+        obs.append(min(state.get("empty_seats", 0) / TOTAL_SEATS, 1.0))
+
+        # 9. Dish state (normalized)
+        obs.append(min(state.get("clean_dishes", 0) / MAX_DISHES, 1.0))
+        obs.append(min(state.get("dirty_dishes", 0) / MAX_DISHES, 1.0))
+        obs.append(min(state.get("dishes_being_washed", 0) / MAX_DISHES, 1.0))
+
         return np.array(obs, dtype=np.float32)
 
     def reset(
@@ -188,7 +223,7 @@ class RamenShopEnv(gym.Env):
         # Reset simulator
         if seed is not None:
             self._seed = seed
-            self.sim = RamenShopSimulator(scenario=self.scenario, seed=seed)
+            self.sim = RamenShopSimulator(scenario=self.scenario, seed=seed, enable_logging=self.enable_logging, enable_state_log=self.enable_state_log)
         else:
             self.sim.reset()
 
@@ -268,6 +303,15 @@ class RamenShopEnv(gym.Env):
             episode_summary = compute_episode_metrics(self.episode_rewards)
             sim_summary = self.sim.get_metrics_summary()
             info["episode"] = {**episode_summary, **sim_summary}
+
+            # Save logs if logging is enabled
+            if self.enable_logging and self.sim.logger:
+                log_files = self.sim.logger.save_to_csv(prefix="episode_log")
+                info["log_files"] = log_files
+                print(f"\n📁 Logs saved:")
+                for log_type, filename in log_files.items():
+                    print(f"   {log_type}: {filename}")
+                self.sim.logger.print_summary()
 
         return obs, reward, terminated, truncated, info
 

@@ -13,12 +13,14 @@ from dataclasses import dataclass
 class ProcessConfig:
     """Configuration for a single process step."""
     id: str
-    mean_time: float  # seconds
+    mean_time: float  # seconds (actual work time)
     std_time: float   # seconds
+    setup_time: float = 5.0  # seconds (preparation time before work starts)
 
     def __post_init__(self):
         assert self.mean_time > 0, f"mean_time must be positive: {self.mean_time}"
         assert self.std_time >= 0, f"std_time must be non-negative: {self.std_time}"
+        assert self.setup_time >= 0, f"setup_time must be non-negative: {self.setup_time}"
 
 
 # =============================================================================
@@ -26,9 +28,9 @@ class ProcessConfig:
 # =============================================================================
 
 PROCESSES = [
-    ProcessConfig(id="boil", mean_time=180.0, std_time=20.0),      # 麺茹で
-    ProcessConfig(id="plate", mean_time=30.0, std_time=5.0),       # 盛り付け
-    ProcessConfig(id="serve", mean_time=20.0, std_time=3.0),       # 配膳
+    ProcessConfig(id="boil", mean_time=90.0, std_time=10.0),       # 麺茹で
+    ProcessConfig(id="plate", mean_time=15.0, std_time=2.0),       # 盛り付け (5s setup + 15s work)
+    ProcessConfig(id="serve", mean_time=15.0, std_time=2.0),       # 配膳 (5s setup + 15s work)
 ]
 
 # Future expansion examples (commented out for now):
@@ -42,13 +44,33 @@ PROCESSES = [
 # =============================================================================
 
 # Fixed staff assignments (process_id -> number of staff)
+# IMPORTANT: Set to 0 for all processes to require explicit instructions
 FIXED_STAFF = {
-    "boil": 1,    # 1 person dedicated to boiling
-    "plate": 1,   # 1 person for plating (can also serve if needed)
+    "boil": 0,    # No dedicated staff - instruction required
+    "plate": 0,   # No dedicated staff - instruction required
+    "serve": 0,   # No dedicated staff - instruction required
 }
 
 # Number of float staff (can be assigned to any task)
 NUM_FLOAT_STAFF = 1
+
+# Process capacity limits (maximum concurrent orders being processed)
+# Note: Physical capacity is 4 for boiling, but 1 person can only manage 2
+PROCESS_CAPACITY_LIMITS = {
+    "boil": 4,    # Physical capacity: 4 noodle portions (but 1 person limited to 2)
+    "plate": 10,  # No practical limit for plating
+    "serve": 10,  # No practical limit for serving
+}
+
+# Capacity limits when only 1 person is working (without helper)
+PROCESS_CAPACITY_LIMITS_SOLO = {
+    "boil": 2,    # 1 person can manage max 2 portions
+    "plate": 10,  # No change
+    "serve": 10,  # No change
+}
+
+# Maximum concurrent dish washing (only 1 person can wash at a time)
+MAX_CONCURRENT_DISH_WASHING = 1
 
 
 # =============================================================================
@@ -57,10 +79,10 @@ NUM_FLOAT_STAFF = 1
 
 ACTION_SPACE = [
     "DO_NOTHING",      # Stay idle or continue current task
-    "DISH_HELP",       # Help with dishwashing (parallel track)
-    "PLATE_HELP",      # Help with plating
-    "SERVE_HELP",      # Help with serving
-    "RESTOCK_HELP",    # Help with restocking (parallel track)
+    "BOIL_HELP",       # Help with boiling (麺茹で)
+    "PLATE_HELP",      # Help with plating (盛り付け)
+    "SERVE_HELP",      # Help with serving (配膳)
+    "DISH_WASH",       # Wash dirty dishes (皿洗い)
 ]
 
 # Action duration (all actions last this long before next decision)
@@ -82,12 +104,36 @@ SCENARIOS = {
     },
     "peak": {
         "name": "Peak Hours",
-        "arrival_rate": 1.0 / 30.0,  # λ = 1 order per 30 seconds
+        "arrival_rate": 1.0 / 30.0,  # λ = 1 order per 30 seconds (2x base)
         "duration": 1200.0,           # 20 minutes
+    },
+    "low": {
+        "name": "Low Traffic",
+        "arrival_rate": 1.0 / 120.0,  # λ = 1 order per 120 seconds (0.5x base)
+        "duration": 1200.0,            # 20 minutes
     },
 }
 
 DEFAULT_SCENARIO = "base"
+
+
+# =============================================================================
+# RESTAURANT CAPACITY PARAMETERS
+# =============================================================================
+
+# Total number of seats in the restaurant
+TOTAL_SEATS = 10
+
+# Average eating time (seconds) - how long customers stay after receiving food
+EATING_TIME_MEAN = 360.0  # 6 minutes (realistic for ramen shop)
+EATING_TIME_STD = 60.0    # 1 minute variation
+
+# Dish washing parameters
+DISH_WASHING_TIME_PER_DISH = 20.0  # seconds per dish (fixed)
+TOTAL_DISHES = 30  # Total number of dishes in the restaurant
+
+# Initial number of clean dishes available
+INITIAL_CLEAN_DISHES = 30
 
 
 # =============================================================================
@@ -98,7 +144,7 @@ DEFAULT_SCENARIO = "base"
 DECISION_INTERVAL = 30.0  # seconds (must equal ACTION_DURATION)
 
 # Episode length
-EPISODE_STEPS = 40  # 40 steps × 30s = 20 minutes
+EPISODE_STEPS = 240  # 240 steps × 30s = 120 minutes (extended to ensure dish washing is critical)
 
 # Random seed
 DEFAULT_SEED = 42
@@ -114,6 +160,7 @@ REWARD_WEIGHTS = {
     "wip_overflow": -5.0,           # -5 per item over threshold
     "idle_penalty": -0.2,           # -0.2 per second of idle time
     "change_penalty": -2.0,         # -2 for changing action from previous step
+    "dish_shortage": -2.0,          # -2 per dish below threshold (reduced to allow cooking help)
 }
 
 # WIP (Work In Progress) threshold for overflow penalty
@@ -121,17 +168,12 @@ WIP_OVERFLOW_THRESHOLD = 10  # items
 
 
 # =============================================================================
-# HELPER EFFECT MULTIPLIERS
+# HELPER EFFECT
 # =============================================================================
 
-# When float staff helps a process, how much does it speed up?
-# 1.0 = no effect, 2.0 = doubles the throughput
-HELP_EFFECT_MULTIPLIERS = {
-    "PLATE_HELP": 1.5,   # 50% faster plating when helper joins
-    "SERVE_HELP": 1.5,   # 50% faster serving when helper joins
-    "DISH_HELP": 1.3,    # 30% faster dishwashing
-    "RESTOCK_HELP": 1.3, # 30% faster restocking
-}
+# Helper increases CAPACITY, not speed
+# When float staff helps, the capacity limit increases (e.g., boil: 2 -> 4)
+# Processing time remains the same
 
 
 # =============================================================================
@@ -143,6 +185,8 @@ MAX_ARRIVALS_PER_STEP = 5      # Max orders arriving in 30s
 MAX_WIP_PER_PROCESS = 15       # Max items waiting/in-progress per process
 MAX_IDLE_TIME = 30.0           # Max idle time tracked (= DECISION_INTERVAL)
 MAX_PENDING_TIME = 10.0        # Max pending time (= ACTION_DELAY)
+MAX_WAITING_CUSTOMERS = 20     # Max customers waiting for seats
+MAX_DISHES = 50                # Max dishes (clean or dirty)
 
 
 # =============================================================================
@@ -158,11 +202,12 @@ def validate_config() -> None:
     assert ACTION_DELAY < ACTION_DURATION, "ACTION_DELAY must be less than ACTION_DURATION"
     assert EPISODE_STEPS > 0, "EPISODE_STEPS must be positive"
 
-    # Validate all help actions have multipliers
-    help_actions = [a for a in ACTION_SPACE if a.endswith("_HELP")]
-    for action in help_actions:
-        if action not in HELP_EFFECT_MULTIPLIERS:
-            print(f"Warning: No multiplier defined for {action}, defaulting to 1.0")
+    # Validate capacity limits are defined
+    for process in PROCESSES:
+        if process.id not in PROCESS_CAPACITY_LIMITS:
+            print(f"Warning: No capacity limit defined for {process.id}")
+        if process.id not in PROCESS_CAPACITY_LIMITS_SOLO:
+            print(f"Warning: No solo capacity limit defined for {process.id}")
 
     print("✓ Configuration validated successfully")
 

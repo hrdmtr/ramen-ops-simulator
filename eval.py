@@ -84,6 +84,12 @@ def parse_args():
         help="Also evaluate random baseline",
     )
 
+    parser.add_argument(
+        "--enable-logging",
+        action="store_true",
+        help="Enable detailed logging (instructions, completions, transitions)",
+    )
+
     return parser.parse_args()
 
 
@@ -312,6 +318,7 @@ def main(args):
         scenario=args.scenario,
         seed=args.seed,
         render_mode=render_mode,
+        enable_logging=args.enable_logging,
     )
 
     # Evaluate trained model
